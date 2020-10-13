@@ -581,7 +581,7 @@ export class ApplicationDetails extends React.Component<RouteComponentProps<{nam
         this.appContext.apis.navigation.goto('.', {rollback: selectedDeploymentIndex});
     }
 
-    private selectNode(fullName: string, containerIndex = 0, tab: string = null) {
+    private selectNode(fullName: string, containerIndex = -1, tab: string = null) {
         const node = fullName ? `${fullName}/${containerIndex}` : null;
         this.appContext.apis.navigation.goto('.', {node, tab});
     }
@@ -765,7 +765,9 @@ Are you sure you want to disable auto-sync and rollback application '${this.prop
                                                     className='application-details__container'
                                                     key={container.name}
                                                     onClick={() => this.selectNode(this.selectedNodeKey, group.offset + i, 'logs')}>
-                                                    {group.offset + i === this.selectedNodeInfo.container && <i className='fa fa-angle-right' />}
+                                                    {(this.selectedNodeInfo.container === -1
+                                                        ? group.offset + i === (state.spec.initContainers || []).length
+                                                        : group.offset + i === this.selectedNodeInfo.container) && <i className='fa fa-angle-right' />}
                                                     <span title={container.name}>{container.name}</span>
                                                 </div>
                                             ))}
@@ -773,7 +775,11 @@ Are you sure you want to disable auto-sync and rollback application '${this.prop
                                     ))}
                                 </div>
                                 <div className='columns small-9 medium-10'>
-                                    <PodsLogsViewer pod={state} applicationName={application.metadata.name} containerIndex={this.selectedNodeInfo.container} />
+                                    <PodsLogsViewer
+                                        pod={state}
+                                        applicationName={application.metadata.name}
+                                        containerIndex={this.selectedNodeInfo.container === -1 ? (state.spec.initContainers || []).length : this.selectedNodeInfo.container}
+                                    />
                                 </div>
                             </div>
                         </div>
