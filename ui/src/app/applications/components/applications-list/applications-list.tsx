@@ -163,6 +163,7 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
     const [createApi, setCreateApi] = React.useState(null);
     const clusters = React.useMemo(() => services.clusters.list(), []);
     const [isAppCreatePending, setAppCreatePending] = React.useState(false);
+    const searchBar = React.useRef(null);
 
     const loaderRef = React.useRef<DataLoader>();
     function refreshApp(appName: string) {
@@ -274,7 +275,14 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
                                                         <Query>
                                                             {q => (
                                                                 <div className='applications-list__search'>
-                                                                    <i className='fa fa-search' />
+                                                                    <i
+                                                                        className='fa fa-search'
+                                                                        onClick={() => {
+                                                                            if (searchBar.current) {
+                                                                                searchBar.current.focus();
+                                                                            }
+                                                                        }}
+                                                                    />
                                                                     {q.get('search') && (
                                                                         <i className='fa fa-times' onClick={() => ctx.navigation.goto('.', {search: null}, {replace: true})} />
                                                                     )}
@@ -291,6 +299,7 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
                                                                                 }}
                                                                                 className='argo-field'
                                                                                 placeholder='Search applications...'
+                                                                                ref={searchBar}
                                                                             />
                                                                         )}
                                                                         renderItem={item => (
