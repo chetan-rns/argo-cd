@@ -56,7 +56,7 @@ export const ApplicationStatusPanel = ({application, showOperation, showConditio
         new Map<string, number>()
     );
     const appOperationState = getAppOperationState(application);
-    if (application.metadata.deletionTimestamp) {
+    if (application.metadata.deletionTimestamp && !appOperationState) {
         showOperation = null;
     }
 
@@ -68,12 +68,12 @@ export const ApplicationStatusPanel = ({application, showOperation, showConditio
         <div className='application-status-panel row'>
             <div className='application-status-panel__item'>
                 {sectionLabel({title: 'APP HEALTH', helpContent: 'The health status of your app'})}
-                <div className='application-status-panel__item-value' style={{margin: 'auto 0'}}>
+                <div className='application-status-panel__item-value'>
                     <HealthStatusIcon state={application.status.health} />
                     &nbsp;
                     {application.status.health.status}
                 </div>
-                <div className='application-status-panel__item-name'>{application.status.health.message}</div>
+                {application.status.health.message && <div className='application-status-panel__item-name'>{application.status.health.message}</div>}
             </div>
             <div className='application-status-panel__item'>
                 <React.Fragment>
@@ -102,7 +102,7 @@ export const ApplicationStatusPanel = ({application, showOperation, showConditio
                     <React.Fragment>
                         {sectionHeader(
                             {
-                                title: 'LAST SYNC STATUS',
+                                title: 'LAST SYNC RESULT',
                                 helpContent:
                                     'Whether or not your last app sync was successful. It has been ' +
                                     daysSinceLastSynchronized +

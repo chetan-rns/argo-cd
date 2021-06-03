@@ -28,7 +28,7 @@ This will create a new namespace, `argocd`, where Argo CD services and applicati
 
 Download the latest Argo CD version from [https://github.com/argoproj/argo-cd/releases/latest](https://github.com/argoproj/argo-cd/releases/latest). More detailed installation instructions can be found via the [CLI installation documentation](cli_installation.md).
 
-Also available in Mac Homebrew:
+Also available in Mac, Linux and WSL Homebrew:
 
 ```bash
 brew install argocd
@@ -62,8 +62,8 @@ The API server can then be accessed using the localhost:8080
 ## 4. Login Using The CLI
 
 !!! warning
-    We strongly advise to change the initially generated administrative password
-    as soon as after your first login to the system.
+    We strongly advise changing the initially generated administrative password
+    immediately after you first log into the system.
 
 Depending on the Argo CD version you are installing, the method how to get the
 initial password for the `admin` user is different.
@@ -92,17 +92,17 @@ argocd account update-password
 !!! note
     The initial password is set in a kubernetes secret, named `argocd-secret`, during ArgoCD's initial start up. This means if you edit
     the deployment in any way which causes a new pod to be deployed, such as disabling TLS on the Argo CD API server. Take note of the initial
-    pod name when you first install Argo CD, or reset the password by following [these instructions](../../faq/#i-forgot-the-admin-password-how-do-i-reset-it)
+    pod name when you first install Argo CD, or reset the password by following [these instructions](../faq/#i-forgot-the-admin-password-how-do-i-reset-it)
 
 > Argo CD v1.9 and later
 
 The initial password for the `admin` account is auto-generated and stored as
-clear text in the field `password` in a secret named `argocd-initial-admin-password`
+clear text in the field `password` in a secret named `argocd-initial-admin-secret`
 in your Argo CD installation namespace. You can simply retrieve this password
 using `kubectl`:
 
 ```bash
-kubectl -n argocd get secret argocd-initial-admin-password -o jsonpath="{.data.password}" | base64 -d
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
 ```
 
 For better readability, e.g. if you want to copy & paste the generated password,
@@ -122,7 +122,7 @@ argocd account update-password
 ```
 
 !!! note
-    You should delete the `argocd-initial-admin-password` from the Argo CD
+    You should delete the `argocd-initial-admin-secret` from the Argo CD
     namespace once you changed the password. The secret serves no other
     purpose than to store the initially generated password in clear and can
     safely be deleted at any time. It will be re-created on demand by Argo CD

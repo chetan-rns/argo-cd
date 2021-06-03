@@ -20,14 +20,14 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/argoproj/argo-cd/common"
-	appv1 "github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
-	apps "github.com/argoproj/argo-cd/pkg/client/clientset/versioned/fake"
-	"github.com/argoproj/argo-cd/pkg/client/listers/application/v1alpha1"
-	"github.com/argoproj/argo-cd/test"
-	"github.com/argoproj/argo-cd/util/errors"
-	"github.com/argoproj/argo-cd/util/password"
-	"github.com/argoproj/argo-cd/util/settings"
+	"github.com/argoproj/argo-cd/v2/common"
+	appv1 "github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
+	apps "github.com/argoproj/argo-cd/v2/pkg/client/clientset/versioned/fake"
+	"github.com/argoproj/argo-cd/v2/pkg/client/listers/application/v1alpha1"
+	"github.com/argoproj/argo-cd/v2/test"
+	"github.com/argoproj/argo-cd/v2/util/errors"
+	"github.com/argoproj/argo-cd/v2/util/password"
+	"github.com/argoproj/argo-cd/v2/util/settings"
 )
 
 func getProjLister(objects ...runtime.Object) v1alpha1.AppProjectNamespaceLister {
@@ -78,53 +78,97 @@ func newSessionManager(settingsMgr *settings.SettingsManager, projectLister v1al
 }
 
 func TestSessionManager_AdminToken(t *testing.T) {
-	const (
-		defaultSubject = "admin"
-	)
-	settingsMgr := settings.NewSettingsManager(context.Background(), getKubeClient("pass", true), "argocd")
-	mgr := newSessionManager(settingsMgr, getProjLister(), NewInMemoryUserStateStorage())
+	redisClient, closer := test.NewInMemoryRedis()
+	defer closer()
 
-	token, err := mgr.Create(defaultSubject, 0, "")
+	settingsMgr := settings.NewSettingsManager(context.Background(), getKubeClient("pass", true), "argocd")
+	mgr := newSessionManager(settingsMgr, getProjLister(), NewUserStateStorage(redisClient))
+
+	token, err := mgr.Create("admin:login", 0, "123")
 	if err != nil {
 		t.Errorf("Could not create token: %v", err)
 	}
 
-	claims, err := mgr.Parse(token)
-	if err != nil {
-		t.Errorf("Could not parse token: %v", err)
-	}
+	claims, newToken, err := mgr.Parse(token)
+	assert.NoError(t, err)
+	assert.Empty(t, newToken)
 
 	mapClaims := *(claims.(*jwt.MapClaims))
 	subject := mapClaims["sub"].(string)
 	if subject != "admin" {
-		t.Errorf("Token claim subject \"%s\" does not match expected subject \"%s\".", subject, defaultSubject)
+		t.Errorf("Token claim subject \"%s\" does not match expected subject \"%s\".", subject, "admin")
 	}
 }
 
-func TestSessionManager_AdminToken_Deactivated(t *testing.T) {
-	settingsMgr := settings.NewSettingsManager(context.Background(), getKubeClient("pass", false), "argocd")
-	mgr := newSessionManager(settingsMgr, getProjLister(), NewInMemoryUserStateStorage())
+func TestSessionManager_AdminToken_ExpiringSoon(t *testing.T) {
+	redisClient, closer := test.NewInMemoryRedis()
+	defer closer()
 
-	token, err := mgr.Create("admin", 0, "")
+	settingsMgr := settings.NewSettingsManager(context.Background(), getKubeClient("pass", true), "argocd")
+	mgr := newSessionManager(settingsMgr, getProjLister(), NewUserStateStorage(redisClient))
+
+	token, err := mgr.Create("admin:login", int64(autoRegenerateTokenDuration.Seconds()-1), "123")
 	if err != nil {
 		t.Errorf("Could not create token: %v", err)
 	}
 
-	_, err = mgr.Parse(token)
+	// verify new token is generated is login token is expiring soon
+	_, newToken, err := mgr.Parse(token)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, newToken)
+
+	// verify that new token is valid and for the same user
+	claims, _, err := mgr.Parse(newToken)
+	assert.NoError(t, err)
+	mapClaims := *(claims.(*jwt.MapClaims))
+	subject := mapClaims["sub"].(string)
+	assert.Equal(t, "admin", subject)
+}
+
+func TestSessionManager_AdminToken_Revoked(t *testing.T) {
+	redisClient, closer := test.NewInMemoryRedis()
+	defer closer()
+
+	settingsMgr := settings.NewSettingsManager(context.Background(), getKubeClient("pass", true), "argocd")
+	storage := NewUserStateStorage(redisClient)
+
+	mgr := newSessionManager(settingsMgr, getProjLister(), storage)
+
+	token, err := mgr.Create("admin:login", 0, "123")
+	require.NoError(t, err)
+
+	err = storage.RevokeToken(context.Background(), "123", time.Hour)
+	require.NoError(t, err)
+
+	_, _, err = mgr.Parse(token)
+	require.Error(t, err)
+	assert.Equal(t, "token is revoked, please re-login", err.Error())
+}
+
+func TestSessionManager_AdminToken_Deactivated(t *testing.T) {
+	settingsMgr := settings.NewSettingsManager(context.Background(), getKubeClient("pass", false), "argocd")
+	mgr := newSessionManager(settingsMgr, getProjLister(), NewUserStateStorage(nil))
+
+	token, err := mgr.Create("admin:login", 0, "abc")
+	if err != nil {
+		t.Errorf("Could not create token: %v", err)
+	}
+
+	_, _, err = mgr.Parse(token)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "account admin is disabled")
 }
 
 func TestSessionManager_AdminToken_LoginCapabilityDisabled(t *testing.T) {
 	settingsMgr := settings.NewSettingsManager(context.Background(), getKubeClient("pass", true, settings.AccountCapabilityLogin), "argocd")
-	mgr := newSessionManager(settingsMgr, getProjLister(), NewInMemoryUserStateStorage())
+	mgr := newSessionManager(settingsMgr, getProjLister(), NewUserStateStorage(nil))
 
 	token, err := mgr.Create("admin", 0, "abc")
 	if err != nil {
 		t.Errorf("Could not create token: %v", err)
 	}
 
-	_, err = mgr.Parse(token)
+	_, _, err = mgr.Parse(token)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "account admin does not have 'apiKey' capability")
 }
@@ -145,12 +189,12 @@ func TestSessionManager_ProjectToken(t *testing.T) {
 				},
 			}},
 		}
-		mgr := newSessionManager(settingsMgr, getProjLister(&proj), NewInMemoryUserStateStorage())
+		mgr := newSessionManager(settingsMgr, getProjLister(&proj), NewUserStateStorage(nil))
 
 		jwtToken, err := mgr.Create("proj:default:test", 100, "abc")
 		require.NoError(t, err)
 
-		_, err = mgr.Parse(jwtToken)
+		_, _, err = mgr.Parse(jwtToken)
 		assert.NoError(t, err)
 	})
 
@@ -163,12 +207,12 @@ func TestSessionManager_ProjectToken(t *testing.T) {
 			Spec: appv1.AppProjectSpec{Roles: []appv1.ProjectRole{{Name: "test"}}},
 		}
 
-		mgr := newSessionManager(settingsMgr, getProjLister(&proj), NewInMemoryUserStateStorage())
+		mgr := newSessionManager(settingsMgr, getProjLister(&proj), NewUserStateStorage(nil))
 
 		jwtToken, err := mgr.Create("proj:default:test", 10, "")
 		require.NoError(t, err)
 
-		_, err = mgr.Parse(jwtToken)
+		_, _, err = mgr.Parse(jwtToken)
 		require.Error(t, err)
 
 		assert.Contains(t, err.Error(), "does not exist in project 'default'")
@@ -246,7 +290,7 @@ func TestVerifyUsernamePassword(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			settingsMgr := settings.NewSettingsManager(context.Background(), getKubeClient(password, !tc.disabled), "argocd")
 
-			mgr := newSessionManager(settingsMgr, getProjLister(), NewInMemoryUserStateStorage())
+			mgr := newSessionManager(settingsMgr, getProjLister(), NewUserStateStorage(nil))
 
 			err := mgr.VerifyUsernamePassword(tc.userName, tc.password)
 
@@ -328,7 +372,7 @@ func TestCacheValueGetters(t *testing.T) {
 
 func TestLoginRateLimiter(t *testing.T) {
 	settingsMgr := settings.NewSettingsManager(context.Background(), getKubeClient("password", true), "argocd")
-	storage := NewInMemoryUserStateStorage()
+	storage := NewUserStateStorage(nil)
 
 	mgr := newSessionManager(settingsMgr, getProjLister(), storage)
 
@@ -369,7 +413,7 @@ func TestMaxUsernameLength(t *testing.T) {
 		username += "a"
 	}
 	settingsMgr := settings.NewSettingsManager(context.Background(), getKubeClient("password", true), "argocd")
-	mgr := newSessionManager(settingsMgr, getProjLister(), NewInMemoryUserStateStorage())
+	mgr := newSessionManager(settingsMgr, getProjLister(), NewUserStateStorage(nil))
 	err := mgr.VerifyUsernamePassword(username, "password")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), fmt.Sprintf(usernameTooLongError, maxUsernameLength))
@@ -377,7 +421,7 @@ func TestMaxUsernameLength(t *testing.T) {
 
 func TestMaxCacheSize(t *testing.T) {
 	settingsMgr := settings.NewSettingsManager(context.Background(), getKubeClient("password", true), "argocd")
-	mgr := newSessionManager(settingsMgr, getProjLister(), NewInMemoryUserStateStorage())
+	mgr := newSessionManager(settingsMgr, getProjLister(), NewUserStateStorage(nil))
 
 	invalidUsers := []string{"invalid1", "invalid2", "invalid3", "invalid4", "invalid5", "invalid6", "invalid7"}
 	// Temporarily decrease max cache size
@@ -393,7 +437,7 @@ func TestMaxCacheSize(t *testing.T) {
 
 func TestFailedAttemptsExpiry(t *testing.T) {
 	settingsMgr := settings.NewSettingsManager(context.Background(), getKubeClient("password", true), "argocd")
-	mgr := newSessionManager(settingsMgr, getProjLister(), NewInMemoryUserStateStorage())
+	mgr := newSessionManager(settingsMgr, getProjLister(), NewUserStateStorage(nil))
 
 	invalidUsers := []string{"invalid1", "invalid2", "invalid3", "invalid4", "invalid5", "invalid6", "invalid7"}
 
